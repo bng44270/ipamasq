@@ -1,7 +1,7 @@
 SHELL := bash
 
 all:
-	@echo "make <config | testdns | testdhcp | testpxe | clearcache | clean>"
+	@echo "make <config | clearcache | clean | testdns | testdhcp | testpxe | testtftp>"
 
 config: lib/settings.py
 
@@ -11,17 +11,27 @@ lib/settings.py:
 clean: clearcache
 	@if test -f lib/settings.py; then rm -v lib/settings.py; fi
 
+testtftp: clearcache
+	@echo -n "Testing PXE functionality..."
+	@python3 -c 'from tests.tftp import svr'
+	@echo "success"
+
+testpxe: clearcache
+	@echo -n "Testing PXE functionality..."
+	@python3 -c 'from tests.pxe import svr'
+	@echo "success"
+
 testdhcp: clearcache
-	echo "dhcp testing coming"
+	@echo -n "Testing DHCP functionality..."
+	@python3 -c 'from tests.dhcp import svr'
+	@echo "success"
 
 testdns: clearcache
-	@echo -n "Testing base functionality..."
+	@echo -n "Testing DNS functionality..."
 	@python3 -c 'from tests.dns import svr'
 	@echo "success"
 
 clearcache:
 	@if ls *conf 2> /dev/null > /dev/null > /dev/null; then rm -v *conf; fi
-	@if ls *json 2> /dev/null > /dev/null; then rm -v *json; fi
-	@if ls *db 2> /dev/null > /dev/null; then rm -v *db; fi
-	@if ls *log.gz 2> /dev/null > /dev/null; then rm -v *log.gz; fi
+	@if ls *log 2> /dev/null > /dev/null > /dev/null; then rm -v *log; fi
 	@find -type d | grep '__pycache__$$' | while read dir; do rm -v -rf "$$dir"; done

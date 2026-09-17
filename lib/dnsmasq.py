@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import signal
 import subprocess
 from lib.settings import DnsMasqBinPath
@@ -8,11 +7,12 @@ from lib.settings import DnsMasqBinPath
 typeof = lambda v : type(v).__name__
 
 class DnsMasqBase:
-  def __init__(self,config="dnsmasq.conf"):
+  def __init__(self,config="dnsmasq.conf",pidfile="dnsmasq.pid",logfile="dnsmasq.log"):
     self.SWITCHES = []
     self.CONF = {}
-    self.DNSMASQ_CONF = config
-    self.PROC = None
+    self.CONFIG_FILE = config
+    self.PID_FILE = pidfile
+    self.LOG_file = logfile
 
   def StartDnsMasq(self,args=True):
     runar = [DnsMasqBinPath,"--no-daemon"]
@@ -20,21 +20,18 @@ class DnsMasqBase:
       runar.extend(self.GetArguments())
     else:
       self.WriteConfig()
-      runar.extend(["-C",self.DNSMASQ_CONF])
-    self.PROC = subprocess.Popen(runar)
-    print(f"dnsmasq started {self.PROC.pid}")
+      runar.extend(["-C",self.CONFIG_FILE])
+    proc = subprocess.Popen(runar,stderr=subprocess.STDOUT,stdout=open(self.LOG_file,"a"))
+    with open(self.PID_FILE,"w") as f:
+      f.write(f"{proc.pid}")
   
   def StopDnsMasq(self):
-    if self.PROC:
-      self.PROC.terminate()
-      try:
-        self.PROC.wait(timeout=5)
-        print(f"dnsmasq stopped {self.PROC.pid}")
-      except subprocess.TimeoutExpired:
-        self.PROC.kill()
-        print(f"dnsmasq process killed {self.PROC.pid}")
+    if os.path.exists(self.PID_FILE):
+      with open(self.PID_FILE,"r") as f:
+        usepid = int(f.readline())
       
-      self.PROC = None
+      os.kill(usepid,signal.SIGTERM)
+      os.remove(self.PID_FILE)
   
   def GetArguments(self):
     args = []
@@ -49,7 +46,7 @@ class DnsMasqBase:
     return args
   
   def WriteConfig(self):
-    with open(self.DNSMASQ_CONF,"w") as conf:
+    with open(self.CONFIG_FILE,"w") as conf:
       for sw in self.SWITCHES:
         conf.write(f"{sw}\n")
 
@@ -86,11 +83,11 @@ class DnsMasqBase:
     return s in ["bogus-priv","dnssec","dnssec-check-unsigned","filterwin2k","strict-order","no-resolv","no-poll","bind-interfaces","no-hosts","expand-hosts","enable-ra","read-ethers","enable-tftp","tftp-no-fail","tftp-secure","tftp-no-blocksize","dhcp-authoritative","dhcp-rapid-commit","no-negcache","localmx","selfmx","log-queries","log-dhcp"]
 
   def __validate_conf(self,c):
-    return c in ["addn-hosts","address","alias","bogus-nxdomain","cache-size","cname","conf-dir","conf-file","dhcp-boot","dhcp-host","dhcp-ignore","dhcp-ignore-names","dhcp-lease-max","dhcp-leasefile","dhcp-mac","dhcp-match","dhcp-name-match","dhcp-option","dhcp-option-force","dhcp-range","dhcp-script","dhcp-userclass","dhcp-vendorclass","domain","except-interface","group","ipset","listen-address","local","local-ttl","mx-host","mx-target","nftset","no-dhcp-interface","port","ptr-record","pxe-prompt","pxe-service","resolv-file","server","srv-host","tftp-root","txt-record","user"]
+    return c in ["interface", "addn-hosts","address","alias","bogus-nxdomain","cache-size","cname","conf-dir","conf-file","dhcp-boot","dhcp-host","dhcp-ignore","dhcp-ignore-names","dhcp-lease-max","dhcp-leasefile","dhcp-mac","dhcp-match","dhcp-name-match","dhcp-option","dhcp-option-force","dhcp-range","dhcp-script","dhcp-userclass","dhcp-vendorclass","domain","except-interface","group","ipset","listen-address","local","local-ttl","mx-host","mx-target","nftset","no-dhcp-interface","port","ptr-record","pxe-prompt","pxe-service","resolv-file","server","srv-host","tftp-root","txt-record","user"]
 
 class DnsMasqDHCP(DnsMasqBase):
-  def __init__(self,interface="eth0",config="dnsmasq_dhcp.conf"):
-    super().__init__()
+  def __init__(self,interface="eth0",config="dnsmasq_dhcp.conf",pidfile="dnsmasq_dhcp.pid",logfile="dnsmasq_dhcp.log"):
+    super().__init__(config=config,pidfile=pidfile,logfile=logfile)
 
     self.CONFIG_FILE = config
     self.Set("interface",interface)
@@ -112,11 +109,23 @@ class DnsMasqDHCP(DnsMasqBase):
       self.__add_dhcp_option("option:router",r)
 
   def AddDhcpNtpServer(self,*n):
-    if self.__validate_ip(n):
+    valid = True
+    for this_n in n:
+      if not self.__validate_ip(this_n):
+        valid = False
+        break
+    
+    if valid:
       self.__add_dhcp_option("option:ntp-server",",".join(n))
   
   def AddDhcpDnsServer(self,*d):
-    if self.__validate_ip(d):
+    valid = True
+    for this_d in d:
+      if not self.__validate_ip(this_d):
+        valid = False
+        break
+
+    if valid:
       self.__add_dhcp_option("option:dns-server",",".join(d))
 
   def AddDhcpNetmask(self,s):
@@ -136,8 +145,8 @@ class DnsMasqDHCP(DnsMasqBase):
     if len([a for a in self.CONF if a.startswith(f"dhcp-option={str(o)}")]) > 0:
       self.CONF = [a for a in self.CONF if not a.startswith(f"dhcp-option={str(o)}")]
   
-  def __validate_ip(self,a):
-      oct = [int(a) for a in a.split('.')]
+  def __validate_ip(self,addr):
+      oct = [int(a) for a in addr.split('.')]
       return len(oct) == 4 and 255 >= oct[0] >= 1 and 255 >= oct[1] >= 1 and 255 >= oct[2] >= 1 and 255 >= oct[3] >= 1
 
   def __validate_mac(self,m):
@@ -153,9 +162,20 @@ class DnsMasqDHCP(DnsMasqBase):
     validbin = r'^0b1*0*$'
     return len(oct) == 4 and re.match(validbin,bin(oct[0])) and re.match(validbin,bin(oct[1])) and re.match(validbin,bin(oct[2])) and re.match(validbin,bin(oct[3]))    
 
+class DnsMasqTFTP(DnsMasqBase):
+  def __init__(self,tftppath="/var/ftpd",secure=True,interface="eth0",config="dnsmasq_tftp.conf",pidfile="dnsmasq_tftp.pid",logfile="dnsmasq_tftp.log"):
+    super().__init__(interface=interface,config=config,logfile=logfile,pidfile=pidfile)
+
+    self.Set("port",0)
+    self.Set("enable-tftp")
+    self.Set("tftp-root",tftppath)
+    self.Set("tftp-no-fail")
+    if secure:
+      self.Set("tftp-secure")
+
 class DnsMasqPXE(DnsMasqDHCP):
-  def __init__(self,tftppath="/var/ftpd",secure=True,interface="eth0",config="dnsmasq_pxe.conf"):
-    super().__init__(interface=interface)
+  def __init__(self,tftppath="/var/ftpd",secure=True,config="dnsmasq_pxe.conf",interface="eth0",pidfile="dnsmasq_pxe.pid",logfile="dnsmasq_pxe.log"):
+    super().__init__(interface=interface,config=config,pidfile=pidfile,logfile=logfile)
 
     self.Set("enable-tftp")
     self.Set("tftp-root",tftppath)
@@ -166,8 +186,9 @@ class DnsMasqPXE(DnsMasqDHCP):
     self.Set("dhcp-boot","pxelinux.0")
 
 class DnsMasqDNS(DnsMasqBase):
-  def __init__(self,interface="eth0",port=53,config="dnsmasq_dns.json"):
-    super().__init__()
+  def __init__(self,interface="eth0",port=53,config="dnsmasq_dns.conf",pidfile="dnsmasq_dns.pid",logfile="dnsmasq_dns.log"):
+    super().__init__(config=config,pidfile=pidfile,logfile=logfile)
+
     self.Set("port",port)
     self.CONFIG_FILE = config
     self.managed_hosts = {}
@@ -226,23 +247,7 @@ class DnsMasqDNS(DnsMasqBase):
       self.Set("server",value)
       if not skip:
         self.dns_conf['servers'].append(value)
-  
-  def WriteJson(self):
-    with open(self.CONFIG_FILE,"w") as conf:
-      json.dump({"conf":self.dns_conf,"hosts":self.managed_hosts},conf)
-
-  def ReadJson(self):
-    if not os.path.exists(self.CONFIG_FILE):
-      raise Exception(f"File not found {self.CONFIG_FILE}")
     
-    with open(self.CONFIG_FILE,"r") as conf:
-      data = json.load(conf)
-
-    self.dns_conf = data['conf']
-    self.managed_hosts = data['hosts']
-    
-    self.__build_dnsmasq_conf()
-  
   def __validate_ip(self,a):
     oct = [int(a) for a in a.split('.')]
     return len(oct) == 4 and 255 >= oct[0] >= 1 and 255 >= oct[1] >= 1 and 255 >= oct[2] >= 1 and 254 >= oct[3] >= 1
