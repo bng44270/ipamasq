@@ -33,5 +33,6 @@ testdns: clearcache
 
 clearcache:
 	@if ls *conf 2> /dev/null > /dev/null > /dev/null; then rm -v *conf; fi
+	@if ls *pid 2> /dev/null > /dev/null > /dev/null; then rm -v *pid; fi
 	@if ls *log 2> /dev/null > /dev/null > /dev/null; then rm -v *log; fi
 	@find -type d | grep '__pycache__$$' | while read dir; do rm -v -rf "$$dir"; done
